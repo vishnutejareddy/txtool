@@ -1,69 +1,115 @@
 # txtool
 
-A Python CLI for common text processing tasks: search, replace, filter, and stats.
+A fast, colorful Python CLI for common text processing tasks — search, replace, filter, and stats — across single files, globs, or entire directories.
 
 ## Installation
 
 ```bash
-pip install -e .
+pip install txtlvit
 ```
 
-## Usage
-
-### search
+Then use it as:
 
 ```bash
-txtool search "TODO" "**/*.py" -n
-txtool search -i "error" logs/*.log --no-color
+txtool --help
 ```
 
-Options:
-- `--regex / --no-regex` — regex mode (default: on)
-- `-i, --ignore-case` — case-insensitive
-- `-n, --line-numbers` — show line numbers
-- `--color / --no-color` — colorize output
+---
 
-### replace
+## Commands
+
+### `txtool search` — grep-style search
 
 ```bash
-txtool replace "foo" "bar" file.txt --dry-run
-txtool replace "foo" "bar" *.txt --in-place
+txtool search "TODO" "**/*.py"           # regex search across all .py files
+txtool search "error" app.log -n         # show line numbers
+txtool search -i "warning" logs/*.log    # case-insensitive
+txtool search --no-regex "fo+" file.txt  # literal string (not regex)
+txtool search "def " src/ -n --no-color  # search entire directory
 ```
 
-Options:
-- `--regex / --no-regex` — regex mode (default: on)
-- `-i, --ignore-case` — case-insensitive
-- `--in-place` — edit files in place
-- `--dry-run` — preview changes without writing
+| Flag | Description |
+|------|-------------|
+| `--regex / --no-regex` | Regex mode (default: on) |
+| `-i, --ignore-case` | Case-insensitive matching |
+| `-n, --line-numbers` | Show line numbers in output |
+| `--color / --no-color` | Colorize matched text |
 
-### filter
+---
+
+### `txtool replace` — find & replace
 
 ```bash
-txtool filter "ERROR" logs/*.log
-txtool filter -v "DEBUG" app.log
+txtool replace "foo" "bar" file.txt              # print result to stdout
+txtool replace "foo" "bar" *.txt --in-place      # edit files in place
+txtool replace "foo" "bar" file.txt --dry-run    # preview changes only
+txtool replace -i "FOO" "bar" file.txt           # case-insensitive
+txtool replace "v\d+" "v2" --no-regex file.txt   # literal replace
 ```
 
-Options:
-- `-v, --invert` — exclude matching lines
-- `--regex / --no-regex` — regex mode (default: on)
-- `-i, --ignore-case` — case-insensitive
+| Flag | Description |
+|------|-------------|
+| `--regex / --no-regex` | Regex mode (default: on) |
+| `-i, --ignore-case` | Case-insensitive matching |
+| `--in-place` | Write changes back to file |
+| `--dry-run` | Show diff without writing |
 
-### stats
+---
+
+### `txtool filter` — keep or remove lines
 
 ```bash
-txtool stats *.txt --format table
-txtool stats report.txt --top 5 --format json
+txtool filter "ERROR" app.log             # keep only ERROR lines
+txtool filter -v "DEBUG" app.log          # remove DEBUG lines (invert)
+txtool filter -i "warning" logs/*.log     # case-insensitive filter
+txtool filter "^#" config.txt -v          # strip comment lines
 ```
 
-Options:
-- `--top N` — number of top words (default: 10)
-- `--format [table|json|plain]` — output format (default: table)
+| Flag | Description |
+|------|-------------|
+| `-v, --invert` | Exclude matching lines instead |
+| `--regex / --no-regex` | Regex mode (default: on) |
+| `-i, --ignore-case` | Case-insensitive matching |
+
+---
+
+### `txtool stats` — line, word, char counts + top words
+
+```bash
+txtool stats file.txt                        # table output (default)
+txtool stats *.txt --format plain            # plain text
+txtool stats report.txt --format json        # JSON output
+txtool stats notes.txt --top 5               # show top 5 words
+```
+
+| Flag | Description |
+|------|-------------|
+| `--top N` | Number of top words to show (default: 10) |
+| `--format` | Output format: `table`, `json`, or `plain` |
+
+---
 
 ## File Input
 
-All commands accept:
-- Individual file paths: `file.txt`
-- Glob patterns: `**/*.py`, `logs/*.log`
-- Directory paths (recurse all non-binary files)
+All commands accept any combination of:
 
-Binary files are automatically skipped.
+| Input | Example |
+|-------|---------|
+| Single file | `file.txt` |
+| Glob pattern | `logs/*.log`, `**/*.py` |
+| Directory | `src/` (recurses all text files) |
+
+Binary files are automatically detected and skipped.
+
+---
+
+## Quick Reference
+
+```
+txtool search  <pattern> <files...>              Search for pattern
+txtool replace <pattern> <replacement> <files...> Find and replace
+txtool filter  <pattern> <files...>              Filter lines by pattern
+txtool stats   <files...>                        Show file statistics
+```
+
+Run `txtool <command> --help` for full options on any command.
