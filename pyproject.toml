@@ -3,7 +3,7 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "txtool"
+name = "txtlvit"
 version = "0.1.0"
 description = "A Python CLI for common text processing tasks"
 requires-python = ">=3.9"
