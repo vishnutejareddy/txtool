@@ -1,13 +1,24 @@
 import csv
-import json
 import os
-import re
 import sys
 
 import click
 from rich.console import Console
 from rich.table import Table
 from rich import box
+
+from txtool.core.data import (
+    json_pretty as core_json_pretty,
+    json_minify as core_json_minify,
+    json_validate as core_json_validate,
+    json_get as core_json_get,
+    csv_filter as core_csv_filter,
+    csv_select as core_csv_select,
+    csv_to_json as core_csv_to_json,
+    parse_env,
+    env_diff as core_env_diff,
+    render_template,
+)
 
 console = Console()
 
@@ -17,13 +28,6 @@ def _read_stdin_or_file(file):
         return sys.stdin.read()
     with open(file, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
-
-
-def _read_stdin_or_file_lines(file):
-    if file is None or file == "-":
-        return sys.stdin.readlines()
-    with open(file, "r", encoding="utf-8", errors="replace") as f:
-        return f.readlines()
 
 
 # ---------------------------------------------------------------------------
@@ -42,9 +46,8 @@ def json_pretty(file):
     """Pretty-print JSON."""
     text = _read_stdin_or_file(file)
     try:
-        data = json.loads(text)
-        sys.stdout.write(json.dumps(data, indent=2) + "\n")
-    except json.JSONDecodeError as e:
+        sys.stdout.write(core_json_pretty(text) + "\n")
+    except Exception as e:
         console.print(f"[red]JSON error: {e}[/red]")
         raise SystemExit(1)
 
@@ -55,9 +58,8 @@ def json_minify(file):
     """Minify JSON."""
     text = _read_stdin_or_file(file)
     try:
-        data = json.loads(text)
-        sys.stdout.write(json.dumps(data, separators=(",", ":")) + "\n")
-    except json.JSONDecodeError as e:
+        sys.stdout.write(core_json_minify(text) + "\n")
+    except Exception as e:
         console.print(f"[red]JSON error: {e}[/red]")
         raise SystemExit(1)
 
@@ -67,23 +69,12 @@ def json_minify(file):
 def json_validate(file):
     """Validate JSON."""
     text = _read_stdin_or_file(file)
-    try:
-        json.loads(text)
+    valid, error = core_json_validate(text)
+    if valid:
         console.print("[green]Valid[/green]")
-    except json.JSONDecodeError as e:
-        console.print(f"[red]Invalid JSON: {e}[/red]")
+    else:
+        console.print(f"[red]Invalid JSON: {error}[/red]")
         raise SystemExit(1)
-
-
-def _json_get(data, tokens):
-    for token in tokens:
-        if isinstance(data, dict):
-            data = data[token]
-        elif isinstance(data, list):
-            data = data[int(token)]
-        else:
-            raise KeyError(f"Cannot traverse into {type(data)} with key {token!r}")
-    return data
 
 
 @json_cmd.command("get")
@@ -93,28 +84,10 @@ def json_get(path, file):
     """Extract value by dot-notation path e.g. 'users[0].name'."""
     text = _read_stdin_or_file(file)
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        console.print(f"[red]JSON error: {e}[/red]")
-        raise SystemExit(1)
-
-    # Parse path like "users[0].name" into ["users", "0", "name"]
-    clean_tokens = []
-    for part in re.split(r'\.', path):
-        # Split each part on brackets: "users[0]" -> ["users", "0"]
-        sub = re.split(r'\[|\]', part)
-        for s in sub:
-            if s:
-                clean_tokens.append(s)
-
-    try:
-        value = _json_get(data, clean_tokens)
-        if isinstance(value, (dict, list)):
-            sys.stdout.write(json.dumps(value, indent=2) + "\n")
-        else:
-            sys.stdout.write(str(value) + "\n")
-    except (KeyError, IndexError, TypeError, ValueError) as e:
-        console.print(f"[red]Path error: {e}[/red]")
+        value = core_json_get(text, path)
+        sys.stdout.write(value + "\n")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
 
 
@@ -150,34 +123,9 @@ def csv_view(file, delimiter):
     for h in headers:
         table.add_column(h)
     for row in rows[1:]:
-        # Pad row to match header count
         padded = row + [""] * max(0, len(headers) - len(row))
         table.add_row(*padded[:len(headers)])
     console.print(table)
-
-
-def _evaluate_condition(value, op, operand):
-    if op == "=":
-        return value == operand
-    elif op == "!=":
-        return value != operand
-    elif op == "~":
-        return bool(re.search(operand, value))
-    else:
-        try:
-            v = float(value)
-            o = float(operand)
-        except ValueError:
-            return False
-        if op == ">":
-            return v > o
-        elif op == "<":
-            return v < o
-        elif op == ">=":
-            return v >= o
-        elif op == "<=":
-            return v <= o
-    return False
 
 
 @csv_cmd.command("filter")
@@ -186,40 +134,17 @@ def _evaluate_condition(value, op, operand):
 @click.option("-d", "--delimiter", default=",", help="Field separator (default: ',')")
 def csv_filter(condition, file, delimiter):
     """Filter CSV rows by condition like 'status=active' or 'age>30'."""
-    # Parse condition
-    m = re.match(r'^(\w+)\s*(>=|<=|!=|>|<|=|~)\s*(.+)$', condition)
-    if not m:
-        console.print(f"[red]Invalid condition: {condition}[/red]")
-        raise SystemExit(1)
-    col_name, op, operand = m.group(1), m.group(2), m.group(3)
-
     try:
         with open(file, "r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.reader(f, delimiter=delimiter)
-            rows = list(reader)
-    except Exception as e:
-        console.print(f"[red]Error reading {file}: {e}[/red]")
+            text = f.read()
+        result = core_csv_filter(text, condition, delimiter)
+        sys.stdout.write(result)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
-
-    if not rows:
-        return
-
-    headers = rows[0]
-    if col_name in headers:
-        col_idx = headers.index(col_name)
-    else:
-        try:
-            col_idx = int(col_name) - 1
-        except ValueError:
-            console.print(f"[red]Column not found: {col_name}[/red]")
-            raise SystemExit(1)
-
-    writer = csv.writer(sys.stdout)
-    writer.writerow(headers)
-    for row in rows[1:]:
-        if col_idx < len(row):
-            if _evaluate_condition(row[col_idx], op, operand):
-                writer.writerow(row)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
 
 
 @csv_cmd.command("select")
@@ -230,30 +155,12 @@ def csv_select(columns, file, delimiter):
     """Keep only specified columns (comma-separated names or 1-indexed numbers)."""
     try:
         with open(file, "r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.reader(f, delimiter=delimiter)
-            rows = list(reader)
+            text = f.read()
+        result = core_csv_select(text, columns, delimiter)
+        sys.stdout.write(result)
     except Exception as e:
-        console.print(f"[red]Error reading {file}: {e}[/red]")
+        console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
-
-    if not rows:
-        return
-
-    headers = rows[0]
-    col_specs = [c.strip() for c in columns.split(",")]
-    col_indices = []
-    for spec in col_specs:
-        if spec in headers:
-            col_indices.append(headers.index(spec))
-        else:
-            try:
-                col_indices.append(int(spec) - 1)
-            except ValueError:
-                console.print(f"[red]Unknown column: {spec}[/red]", err=True)
-
-    writer = csv.writer(sys.stdout)
-    for row in rows:
-        writer.writerow([row[i] if 0 <= i < len(row) else "" for i in col_indices])
 
 
 @csv_cmd.command("to-json")
@@ -263,37 +170,16 @@ def csv_to_json(file, delimiter):
     """Convert CSV to JSON array."""
     try:
         with open(file, "r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.DictReader(f, delimiter=delimiter)
-            rows = list(reader)
+            text = f.read()
+        sys.stdout.write(core_csv_to_json(text, delimiter) + "\n")
     except Exception as e:
-        console.print(f"[red]Error reading {file}: {e}[/red]")
+        console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
-
-    sys.stdout.write(json.dumps(rows, indent=2) + "\n")
 
 
 # ---------------------------------------------------------------------------
 # env group
 # ---------------------------------------------------------------------------
-
-def _parse_env_file(path):
-    """Parse a .env file and return dict of KEY: VALUE."""
-    result = {}
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    result[key] = value
-    except Exception as e:
-        console.print(f"[red]Error reading {path}: {e}[/red]")
-    return result
-
 
 @click.group("env")
 def env_cmd():
@@ -305,7 +191,14 @@ def env_cmd():
 @click.argument("file", default=".env")
 def env_show(file):
     """Pretty-print .env file as a table."""
-    data = _parse_env_file(file)
+    try:
+        with open(file, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except Exception as e:
+        console.print(f"[red]Error reading {file}: {e}[/red]")
+        raise SystemExit(1)
+
+    data = parse_env(text)
     if not data:
         console.print("[yellow]Empty or no valid entries.[/yellow]")
         return
@@ -323,21 +216,27 @@ def env_show(file):
 @click.argument("file2")
 def env_diff(file1, file2):
     """Show keys added/removed/changed between two env files."""
-    data1 = _parse_env_file(file1)
-    data2 = _parse_env_file(file2)
+    try:
+        with open(file1, "r", encoding="utf-8", errors="replace") as f:
+            text1 = f.read()
+        with open(file2, "r", encoding="utf-8", errors="replace") as f:
+            text2 = f.read()
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
 
-    all_keys = sorted(set(data1) | set(data2))
+    diff = core_env_diff(text1, text2)
     found_diff = False
-    for key in all_keys:
-        if key not in data1:
-            console.print(f"[green]+ {key}={data2[key]}[/green]")
-            found_diff = True
-        elif key not in data2:
-            console.print(f"[red]- {key}={data1[key]}[/red]")
-            found_diff = True
-        elif data1[key] != data2[key]:
-            console.print(f"[yellow]~ {key}: {data1[key]!r} → {data2[key]!r}[/yellow]")
-            found_diff = True
+
+    for key, val in diff["added"].items():
+        console.print(f"[green]+ {key}={val}[/green]")
+        found_diff = True
+    for key, val in diff["removed"].items():
+        console.print(f"[red]- {key}={val}[/red]")
+        found_diff = True
+    for key, vals in diff["changed"].items():
+        console.print(f"[yellow]~ {key}: {vals['old']!r} → {vals['new']!r}[/yellow]")
+        found_diff = True
 
     if not found_diff:
         console.print("[dim]No differences.[/dim]")
@@ -348,8 +247,14 @@ def env_diff(file1, file2):
 @click.argument("file")
 def env_check(template, file):
     """Check that all keys in template exist in file."""
-    template_keys = _parse_env_file(template)
-    file_keys = _parse_env_file(file)
+    try:
+        with open(template, "r", encoding="utf-8", errors="replace") as f:
+            template_keys = parse_env(f.read())
+        with open(file, "r", encoding="utf-8", errors="replace") as f:
+            file_keys = parse_env(f.read())
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
 
     missing = [k for k in template_keys if k not in file_keys]
     if missing:
@@ -389,11 +294,7 @@ def template_cmd(file, vars, use_env, in_place):
         console.print(f"[red]Error reading {file}: {e}[/red]")
         raise SystemExit(1)
 
-    def replace_var(m):
-        key = m.group(1).strip()
-        return substitutions.get(key, m.group(0))
-
-    result = re.sub(r'\{\{(\w+)\}\}', replace_var, text)
+    result = render_template(text, substitutions)
 
     if in_place:
         with open(file, "w", encoding="utf-8") as f:

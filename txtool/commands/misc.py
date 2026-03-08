@@ -1,10 +1,7 @@
-import base64
-import hashlib
-import html
+import difflib
 import json
 import subprocess
 import sys
-import urllib.parse
 
 import click
 from rich.console import Console
@@ -12,6 +9,7 @@ from rich.table import Table
 from rich import box
 from rich.text import Text
 
+from txtool.core.misc import encode_text, hash_file as core_hash_file, word_count as core_wc, grep_replace as core_grep_replace
 from txtool.utils import resolve_files, read_lines, compile_pattern
 
 console = Console()
@@ -28,32 +26,14 @@ console = Console()
 @click.option("--text", "text_input", default=None, help="Encode/decode text directly")
 def encode_cmd(method, files, decode, text_input):
     """Encode or decode text using base64, URL, or HTML encoding."""
-    def process(text):
-        if method == "base64":
-            if decode:
-                return base64.b64decode(text.strip()).decode("utf-8", errors="replace")
-            else:
-                return base64.b64encode(text.encode("utf-8")).decode("ascii")
-        elif method == "url":
-            if decode:
-                return urllib.parse.unquote(text)
-            else:
-                return urllib.parse.quote(text)
-        elif method == "html":
-            if decode:
-                return html.unescape(text)
-            else:
-                return html.escape(text)
-
     if text_input is not None:
-        result = process(text_input)
+        result = encode_text(text_input, method, decode=decode)
         sys.stdout.write(result + "\n")
         return
 
     if not files:
-        # Read from stdin
         text = sys.stdin.read()
-        result = process(text)
+        result = encode_text(text, method, decode=decode)
         sys.stdout.write(result + "\n")
         return
 
@@ -69,28 +49,13 @@ def encode_cmd(method, files, decode, text_input):
         except Exception as e:
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
-        result = process(text)
+        result = encode_text(text, method, decode=decode)
         sys.stdout.write(result + "\n")
 
 
 # ---------------------------------------------------------------------------
 # hash
 # ---------------------------------------------------------------------------
-
-def _hash_file(path, algo):
-    h = hashlib.new(algo)
-    try:
-        with open(path, "rb") as f:
-            while True:
-                chunk = f.read(65536)
-                if not chunk:
-                    break
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception as e:
-        console.print(f"[red]Error reading {path}: {e}[/red]")
-        return None
-
 
 @click.command("hash")
 @click.argument("files", nargs=-1, required=True)
@@ -105,10 +70,12 @@ def hash_cmd(files, algo, compare):
 
     hashes = []
     for path in paths:
-        digest = _hash_file(str(path), algo)
-        if digest is not None:
+        try:
+            digest = core_hash_file(str(path), algo)
             hashes.append((digest, str(path)))
             sys.stdout.write(f"{digest}  {path}\n")
+        except Exception as e:
+            console.print(f"[red]Error reading {path}: {e}[/red]")
 
     if compare and hashes:
         unique_hashes = set(h for h, _ in hashes)
@@ -145,7 +112,6 @@ def copy_cmd(files, text_input):
     else:
         content = sys.stdin.read()
 
-    import platform
     plat = sys.platform
     try:
         if plat == "darwin":
@@ -179,20 +145,7 @@ def wc(files, output_format):
         click.echo("No files found.", err=True)
         raise SystemExit(1)
 
-    rows = []
-    for path in paths:
-        try:
-            lines = read_lines(path)
-        except Exception as e:
-            click.echo(f"Error reading {path}: {e}", err=True)
-            continue
-
-        text = "".join(lines)
-        line_count = len(lines)
-        word_count = len(text.split())
-        char_count = len(text)
-        rows.append({"file": str(path), "lines": line_count, "words": word_count, "chars": char_count})
-
+    rows = core_wc(paths)
     if not rows:
         return
 
@@ -237,33 +190,22 @@ def wc(files, output_format):
 @click.option("--dry-run", is_flag=True, help="Show diff only, don't write")
 def grep_replace(pattern, replacement, files, regex, ignore_case, confirm, dry_run):
     """Search for pattern and replace it, showing diff before writing."""
-    compiled = compile_pattern(pattern, regex, ignore_case)
     paths = resolve_files(list(files))
     if not paths:
         click.echo("No files found.", err=True)
         raise SystemExit(1)
 
-    for path in paths:
-        try:
-            lines = read_lines(path)
-        except Exception as e:
-            click.echo(f"Error reading {path}: {e}", err=True)
+    results = core_grep_replace(pattern, replacement, paths, regex=regex,
+                                 ignore_case=ignore_case, dry_run=True)
+
+    for r in results:
+        if not r["changed"]:
             continue
 
-        new_lines = []
-        changed = False
-        for line in lines:
-            new_line = compiled.sub(replacement, line)
-            new_lines.append(new_line)
-            if new_line != line:
-                changed = True
-
-        if not changed:
-            continue
-
-        # Show diff
-        import difflib
-        diff = list(difflib.unified_diff(lines, new_lines, fromfile=str(path), tofile=str(path) + " (modified)"))
+        diff = list(difflib.unified_diff(
+            r["old_lines"], r["new_lines"],
+            fromfile=str(r["file"]), tofile=str(r["file"]) + " (modified)"
+        ))
         for dline in diff:
             dline_stripped = dline.rstrip("\n")
             if dline_stripped.startswith("---") or dline_stripped.startswith("+++"):
@@ -281,9 +223,9 @@ def grep_replace(pattern, replacement, files, regex, ignore_case, confirm, dry_r
             continue
 
         if confirm:
-            answer = click.prompt(f"Apply changes to {path}? [y/N]", default="N")
+            answer = click.prompt(f"Apply changes to {r['file']}? [y/N]", default="N")
             if answer.lower() != "y":
                 continue
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
+        with open(r["path"], "w", encoding="utf-8") as f:
+            f.writelines(r["new_lines"])

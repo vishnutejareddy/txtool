@@ -1,21 +1,8 @@
-import re
 import sys
-
 import click
 
+from txtool.core.extract import extract_patterns, extract_between, extract_columns, ALL_TYPES
 from txtool.utils import resolve_files, read_lines
-
-
-PATTERNS = {
-    "email": re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),
-    "url": re.compile(r'https?://[^\s<>"()]+'),
-    "ip": re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
-    "date": re.compile(r'\b\d{4}-\d{2}-\d{2}\b|\b\d{2}/\d{2}/\d{4}\b'),
-    "phone": re.compile(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'),
-    "number": re.compile(r'\b-?\d+(?:\.\d+)?\b'),
-}
-
-ALL_TYPES = list(PATTERNS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +23,6 @@ def extract(files, types, do_unique):
     active_types = list(types) if types else ALL_TYPES
     multi = len(active_types) > 1
 
-    seen = set()
     for path in paths:
         try:
             lines = read_lines(path)
@@ -45,18 +31,12 @@ def extract(files, types, do_unique):
             continue
 
         text = "".join(lines)
-        for t in active_types:
-            for m in PATTERNS[t].finditer(text):
-                val = m.group()
-                if do_unique:
-                    key = (t, val)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                if multi:
-                    sys.stdout.write(f"{t}: {val}\n")
-                else:
-                    sys.stdout.write(val + "\n")
+        results = extract_patterns(text, types=active_types, unique=do_unique)
+        for r in results:
+            if multi:
+                sys.stdout.write(f"{r['type']}: {r['value']}\n")
+            else:
+                sys.stdout.write(r["value"] + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +56,6 @@ def between(start, end, files, inclusive, use_regex):
         click.echo("No files found.", err=True)
         raise SystemExit(1)
 
-    if use_regex:
-        start_re = re.compile(start)
-        end_re = re.compile(end)
-    else:
-        start_re = re.compile(re.escape(start))
-        end_re = re.compile(re.escape(end))
-
     for path in paths:
         try:
             lines = read_lines(path)
@@ -90,21 +63,8 @@ def between(start, end, files, inclusive, use_regex):
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        inside = False
-        for line in lines:
-            stripped = line.rstrip("\n")
-            if not inside:
-                if start_re.search(stripped):
-                    inside = True
-                    if inclusive:
-                        sys.stdout.write(line)
-            else:
-                if end_re.search(stripped):
-                    inside = False
-                    if inclusive:
-                        sys.stdout.write(line)
-                else:
-                    sys.stdout.write(line)
+        result = extract_between("".join(lines), start, end, inclusive=inclusive, regex=use_regex)
+        sys.stdout.write(result)
 
 
 # ---------------------------------------------------------------------------
@@ -130,51 +90,5 @@ def columns(files, delimiter, fields, header):
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        if not lines:
-            continue
-
-        header_row = None
-        if header:
-            header_line = lines[0].rstrip("\n")
-            if delimiter:
-                header_row = header_line.split(delimiter)
-            else:
-                header_row = header_line.split()
-            data_lines = lines[1:]
-        else:
-            data_lines = lines
-
-        # Parse field indices
-        field_indices = None
-        if fields:
-            field_specs = [f.strip() for f in fields.split(",")]
-            field_indices = []
-            for spec in field_specs:
-                if header_row and spec in header_row:
-                    field_indices.append(header_row.index(spec))
-                else:
-                    try:
-                        field_indices.append(int(spec) - 1)
-                    except ValueError:
-                        click.echo(f"Unknown field: {spec}", err=True)
-                        continue
-
-        if header and field_indices is not None:
-            selected_headers = [header_row[i] for i in field_indices if 0 <= i < len(header_row)]
-            sep = delimiter if delimiter else "\t"
-            sys.stdout.write(sep.join(selected_headers) + "\n")
-
-        for line in data_lines:
-            stripped = line.rstrip("\n")
-            if delimiter:
-                parts = stripped.split(delimiter)
-            else:
-                parts = stripped.split()
-
-            if field_indices is not None:
-                selected = [parts[i] if 0 <= i < len(parts) else "" for i in field_indices]
-            else:
-                selected = parts
-
-            sep = delimiter if delimiter else "\t"
-            sys.stdout.write(sep.join(selected) + "\n")
+        result = extract_columns("".join(lines), fields, delimiter=delimiter, header=header)
+        sys.stdout.write(result)

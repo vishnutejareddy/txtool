@@ -1,12 +1,10 @@
 import json
-import re
-from collections import Counter
-
 import click
 from rich.console import Console
 from rich.table import Table
 
-from txtool.utils import resolve_files, read_lines
+from txtool.core.stats import compute_stats
+from txtool.utils import resolve_files
 
 console = Console()
 
@@ -30,28 +28,7 @@ def stats(files, top, fmt):
         console.print("[yellow]No files found.[/yellow]")
         return
 
-    results = []
-    for path in paths:
-        try:
-            lines = read_lines(path)
-        except Exception as e:
-            console.print(f"[red]Error reading {path}: {e}[/red]")
-            continue
-
-        content = "".join(lines)
-        words = re.findall(r"\b\w+\b", content.lower())
-        line_count = len(lines)
-        word_count = len(words)
-        char_count = len(content)
-        top_words = Counter(words).most_common(top)
-
-        results.append({
-            "file": str(path),
-            "lines": line_count,
-            "words": word_count,
-            "chars": char_count,
-            "top_words": top_words,
-        })
+    results = compute_stats(paths, top)
 
     if fmt == "json":
         output = []

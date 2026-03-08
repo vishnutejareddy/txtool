@@ -2,7 +2,8 @@ import sys
 import click
 from rich.console import Console
 
-from txtool.utils import resolve_files, compile_pattern, read_lines
+from txtool.core.replace import replace as core_replace, apply_replace
+from txtool.utils import resolve_files
 
 console = Console()
 
@@ -17,38 +18,29 @@ console = Console()
 @click.option("--dry-run", is_flag=True, help="Show what would change without writing")
 def replace(pattern, replacement, files, regex, ignore_case, in_place, dry_run):
     """Replace PATTERN with REPLACEMENT in FILES."""
-    compiled = compile_pattern(pattern, regex, ignore_case)
     paths = resolve_files(list(files))
 
     if not paths:
         console.print("[yellow]No files found.[/yellow]")
         return
 
-    for path in paths:
-        try:
-            lines = read_lines(path)
-        except Exception as e:
-            console.print(f"[red]Error reading {path}: {e}[/red]")
-            continue
+    results = core_replace(pattern, replacement, paths, regex, ignore_case)
 
-        new_lines = [compiled.sub(replacement, line) for line in lines]
-        changed = new_lines != lines
-
+    for r in results:
         if dry_run:
-            if changed:
-                console.print(f"[bold cyan]{path}[/bold cyan] [yellow](would change)[/yellow]")
-                _print_diff(lines, new_lines)
+            if r["changed"]:
+                console.print(f"[bold cyan]{r['file']}[/bold cyan] [yellow](would change)[/yellow]")
+                _print_diff(r["old_lines"], r["new_lines"])
             else:
-                console.print(f"[bold cyan]{path}[/bold cyan] [dim](no changes)[/dim]")
+                console.print(f"[bold cyan]{r['file']}[/bold cyan] [dim](no changes)[/dim]")
         elif in_place:
-            if changed:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.writelines(new_lines)
-                console.print(f"[bold cyan]{path}[/bold cyan] [green]updated[/green]")
+            if r["changed"]:
+                apply_replace(r)
+                console.print(f"[bold cyan]{r['file']}[/bold cyan] [green]updated[/green]")
             else:
-                console.print(f"[bold cyan]{path}[/bold cyan] [dim](no changes)[/dim]")
+                console.print(f"[bold cyan]{r['file']}[/bold cyan] [dim](no changes)[/dim]")
         else:
-            sys.stdout.writelines(new_lines)
+            sys.stdout.writelines(r["new_lines"])
 
 
 def _print_diff(old_lines, new_lines):

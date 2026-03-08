@@ -1,9 +1,9 @@
-import re
 import sys
-import textwrap
-
 import click
 
+from txtool.core.transform import (
+    fmt_text, convert_case, sort_lines, dedup_lines, truncate_lines
+)
 from txtool.utils import resolve_files, read_lines
 
 
@@ -41,89 +41,14 @@ def fmt(files, trim, line_endings, wrap_width, indent_width, do_dedent, in_place
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        text = "".join(lines)
-
-        if do_dedent:
-            text = textwrap.dedent(text)
-
-        lines = text.splitlines(keepends=True)
-
-        if trim:
-            new_trim = []
-            for l in lines:
-                content = l.rstrip("\n")
-                newline = l[len(content):]
-                new_trim.append(content.rstrip(" \t") + newline)
-            lines = new_trim
-
-        if wrap_width is not None:
-            new_lines = []
-            for line in lines:
-                stripped = line.rstrip("\n")
-                wrapped = textwrap.fill(stripped, width=wrap_width)
-                new_lines.append(wrapped + "\n")
-            lines = new_lines
-
-        if indent_width is not None:
-            prefix = " " * indent_width
-            lines = [prefix + l for l in lines]
-
-        text = "".join(lines)
-
-        if line_endings == "lf":
-            text = text.replace("\r\n", "\n").replace("\r", "\n")
-        elif line_endings == "crlf":
-            text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
-        elif line_endings == "cr":
-            text = text.replace("\r\n", "\n").replace("\n", "\r")
-
+        text = fmt_text("".join(lines), trim=trim, line_endings=line_endings,
+                        wrap=wrap_width, indent=indent_width, dedent=do_dedent)
         _write_output(text, path, in_place)
 
 
 # ---------------------------------------------------------------------------
 # case
 # ---------------------------------------------------------------------------
-
-def _split_token(token):
-    """Split a token into words, handling camelCase, snake_case, kebab-case."""
-    # Insert space before uppercase letter following a lowercase letter (camelCase)
-    token = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', token)
-    # Split on _ and -
-    words = re.split(r'[_\-\s]+', token)
-    return [w for w in words if w]
-
-
-def _to_snake(token):
-    words = _split_token(token)
-    return "_".join(w.lower() for w in words)
-
-
-def _to_camel(token):
-    words = _split_token(token)
-    if not words:
-        return token
-    return words[0].lower() + "".join(w.capitalize() for w in words[1:])
-
-
-def _to_pascal(token):
-    words = _split_token(token)
-    return "".join(w.capitalize() for w in words)
-
-
-def _to_kebab(token):
-    words = _split_token(token)
-    return "-".join(w.lower() for w in words)
-
-
-CASE_CONVERTERS = {
-    "snake": _to_snake,
-    "camel": _to_camel,
-    "pascal": _to_pascal,
-    "kebab": _to_kebab,
-}
-
-TOKEN_RE = re.compile(r'[a-zA-Z][a-zA-Z0-9_-]*')
-
 
 @click.command("case")
 @click.argument("style", type=click.Choice(["snake", "camel", "pascal", "kebab", "upper", "lower", "title"]))
@@ -143,39 +68,13 @@ def case_cmd(style, files, in_place):
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        out_lines = []
-        for line in lines:
-            content = line.rstrip("\n")
-            newline = line[len(content):]
-
-            if style == "upper":
-                out_lines.append(content.upper() + newline)
-            elif style == "lower":
-                out_lines.append(content.lower() + newline)
-            elif style == "title":
-                out_lines.append(content.title() + newline)
-            else:
-                converter = CASE_CONVERTERS[style]
-                converted = TOKEN_RE.sub(lambda m: converter(m.group()), content)
-                out_lines.append(converted + newline)
-
-        text = "".join(out_lines)
+        text = convert_case("".join(lines), style)
         _write_output(text, path, in_place)
 
 
 # ---------------------------------------------------------------------------
 # sort
 # ---------------------------------------------------------------------------
-
-def _numeric_key(line):
-    m = re.search(r'-?\d+(?:\.\d+)?', line)
-    if m:
-        try:
-            return float(m.group())
-        except ValueError:
-            pass
-    return 0.0
-
 
 @click.command("sort")
 @click.argument("files", nargs=-1, required=True)
@@ -198,25 +97,8 @@ def sort_cmd(files, numeric, by_length, reverse, unique, in_place):
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        stripped = [l.rstrip("\n") for l in lines]
-
-        if numeric:
-            stripped.sort(key=_numeric_key, reverse=reverse)
-        elif by_length:
-            stripped.sort(key=len, reverse=reverse)
-        else:
-            stripped.sort(reverse=reverse)
-
-        if unique:
-            seen = set()
-            deduped = []
-            for l in stripped:
-                if l not in seen:
-                    seen.add(l)
-                    deduped.append(l)
-            stripped = deduped
-
-        text = "\n".join(stripped) + ("\n" if stripped else "")
+        text = sort_lines("".join(lines), numeric=numeric, by_length=by_length,
+                          reverse=reverse, unique=unique)
         _write_output(text, path, in_place)
 
 
@@ -241,15 +123,7 @@ def dedup(files, in_place):
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        seen = set()
-        out_lines = []
-        for line in lines:
-            key = line.rstrip("\n")
-            if key not in seen:
-                seen.add(key)
-                out_lines.append(line)
-
-        text = "".join(out_lines)
+        text = dedup_lines("".join(lines))
         _write_output(text, path, in_place)
 
 
@@ -275,9 +149,5 @@ def truncate(files, head_n, tail_n):
             click.echo(f"Error reading {path}: {e}", err=True)
             continue
 
-        if head_n is not None:
-            lines = lines[:head_n]
-        elif tail_n is not None:
-            lines = lines[-tail_n:] if tail_n > 0 else []
-
-        sys.stdout.write("".join(lines))
+        text = truncate_lines("".join(lines), head=head_n, tail=tail_n)
+        sys.stdout.write(text)

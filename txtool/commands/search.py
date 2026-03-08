@@ -2,7 +2,8 @@ import click
 from rich.console import Console
 from rich.text import Text
 
-from txtool.utils import resolve_files, compile_pattern, read_lines
+from txtool.core.search import search as core_search
+from txtool.utils import resolve_files, compile_pattern
 
 console = Console()
 
@@ -16,33 +17,24 @@ console = Console()
 @click.option("--color/--no-color", default=True, help="Colorize output")
 def search(pattern, files, regex, ignore_case, line_numbers, color):
     """Search for PATTERN in FILES."""
-    compiled = compile_pattern(pattern, regex, ignore_case)
     paths = resolve_files(list(files))
 
     if not paths:
         console.print("[yellow]No files found.[/yellow]")
         raise SystemExit(1)
 
-    found_any = False
-    for path in paths:
-        try:
-            lines = read_lines(path)
-        except Exception as e:
-            console.print(f"[red]Error reading {path}: {e}[/red]")
-            continue
+    compiled = compile_pattern(pattern, regex, ignore_case)
+    results = core_search(pattern, paths, regex, ignore_case)
 
-        for lineno, line in enumerate(lines, 1):
-            stripped = line.rstrip("\n")
-            if compiled.search(stripped):
-                found_any = True
-                if color:
-                    _print_colored_match(str(path), lineno, stripped, compiled, line_numbers)
-                else:
-                    prefix = f"{path}:{lineno}: " if line_numbers else f"{path}: "
-                    click.echo(prefix + stripped)
-
-    if not found_any:
+    if not results:
         raise SystemExit(1)
+
+    for r in results:
+        if color:
+            _print_colored_match(r["file"], r["line_number"], r["line"], compiled, line_numbers)
+        else:
+            prefix = f"{r['file']}:{r['line_number']}: " if line_numbers else f"{r['file']}: "
+            click.echo(prefix + r["line"])
 
 
 def _print_colored_match(filename, lineno, line, compiled, show_lineno):
